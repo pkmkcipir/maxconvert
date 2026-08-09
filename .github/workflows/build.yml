@@ -1,0 +1,83 @@
+name: Build MaxConvert
+
+# Jalan otomatis saat tag versi di-push (contoh: v1.0.0), atau bisa dipicu manual
+# lewat tab "Actions" di GitHub (tombol "Run workflow").
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Versi aplikasi (contoh: 1.0.0)"
+        required: false
+        default: "1.0.0"
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout kode
+        uses: actions/checkout@v7
+
+      - name: Setup Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Tentukan nomor versi build
+        id: version
+        shell: bash
+        run: |
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            VERSION="${{ github.event.inputs.version }}"
+            VERSION="${VERSION:-1.0.0}"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Versi build: $VERSION"
+
+      - name: Install dependensi Python
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Build MaxConvert.exe dengan PyInstaller (mode onedir)
+        run: pyinstaller maxconvert.spec
+
+      - name: Pastikan hasil build ada
+        shell: bash
+        run: |
+          if [ ! -f "dist/MaxConvert/MaxConvert.exe" ]; then
+            echo "MaxConvert.exe tidak ditemukan setelah build PyInstaller!"
+            exit 1
+          fi
+          echo "Build PyInstaller OK."
+
+      - name: Pasang Inno Setup
+        run: choco install innosetup -y
+
+      - name: Build installer MaxConvert-Setup.exe
+        shell: pwsh
+        run: |
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /DMyAppVersion=${{ steps.version.outputs.version }} installer.iss
+
+      - name: Upload hasil build sebagai artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: MaxConvert-Setup-v${{ steps.version.outputs.version }}
+          path: installer_output/MaxConvert-Setup.exe
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Buat GitHub Release (hanya saat push tag)
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v3
+        with:
+          files: installer_output/MaxConvert-Setup.exe
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
